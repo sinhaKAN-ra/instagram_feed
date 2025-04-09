@@ -8,7 +8,7 @@ import {
 } from "@shared/schema";
 
 export interface IStorage {
-  getUser(id: number): Promise<User | undefined>;
+  getUser(id: number | undefined): Promise<User | undefined>;
   getUserByUsername(username: string): Promise<User | undefined>;
   createUser(user: InsertUser): Promise<User>;
   getUserByInstagramId(instagramId: string): Promise<User | undefined>;
@@ -33,7 +33,8 @@ export class MemStorage implements IStorage {
     this.currentId = 1;
   }
 
-  async getUser(id: number): Promise<User | undefined> {
+  async getUser(id: number | undefined): Promise<User | undefined> {
+    if (id === undefined) return undefined;
     return this.users.get(id);
   }
 
@@ -51,7 +52,14 @@ export class MemStorage implements IStorage {
 
   async createUser(insertUser: InsertUser): Promise<User> {
     const id = this.currentId++;
-    const user: User = { ...insertUser, id };
+    const user: User = { 
+      ...insertUser, 
+      id,
+      instagramId: null,
+      accessToken: null,
+      refreshToken: null,
+      tokenExpiry: null
+    };
     this.users.set(id, user);
     return user;
   }
@@ -63,7 +71,7 @@ export class MemStorage implements IStorage {
       const updatedUser = {
         ...existingUser,
         accessToken,
-        refreshToken,
+        refreshToken: refreshToken || null,
         tokenExpiry: new Date(Date.now() + 60 * 24 * 60 * 60 * 1000), // 60 days
       };
       this.users.set(existingUser.id, updatedUser);
@@ -78,7 +86,7 @@ export class MemStorage implements IStorage {
       password: '', // We don't need a password with OAuth
       instagramId,
       accessToken,
-      refreshToken,
+      refreshToken: refreshToken || null,
       tokenExpiry: new Date(Date.now() + 60 * 24 * 60 * 60 * 1000), // 60 days
     };
     this.users.set(id, newUser);
@@ -92,7 +100,7 @@ export class MemStorage implements IStorage {
     const updatedUser = {
       ...user,
       accessToken,
-      refreshToken,
+      refreshToken: refreshToken || null,
       tokenExpiry: new Date(Date.now() + 60 * 24 * 60 * 60 * 1000), // 60 days
     };
     this.users.set(userId, updatedUser);

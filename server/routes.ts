@@ -10,24 +10,29 @@ import { ZodError } from "zod";
 import { fromZodError } from "zod-validation-error";
 import MemoryStore from "memorystore";
 
-// Load environment variables
-dotenv.config();
+// Extend express-session with our custom properties
+declare module 'express-session' {
+  interface SessionData {
+    userId?: number;
+    instagramId?: string;
+  }
+}
 
 const MemoryStoreSession = MemoryStore(session);
 
-// Check required env variables
-const requiredEnvVars = ["FACEBOOK_APP_ID", "FACEBOOK_APP_SECRET", "REDIRECT_URI"];
-const missingEnvVars = requiredEnvVars.filter(varName => !process.env[varName]);
+// Load environment variables
+dotenv.config();
 
-if (missingEnvVars.length > 0) {
-  console.warn(`Missing environment variables: ${missingEnvVars.join(", ")}`);
-  console.warn("Using default development values");
-}
+// Output directly from process.env for debugging
+console.log('Direct from process.env or secrets:');
+console.log(`FACEBOOK_APP_ID=${process.env.FACEBOOK_APP_ID}`);
+console.log(`FACEBOOK_APP_SECRET=${process.env.FACEBOOK_APP_SECRET ? '[SET]' : '[NOT SET]'}`);
+console.log(`REDIRECT_URI=${process.env.REDIRECT_URI}`);
 
-// Default values for development
-const FB_APP_ID = process.env.FACEBOOK_APP_ID || "649641027703622";
-const FB_APP_SECRET = process.env.FACEBOOK_APP_SECRET || "your_facebook_app_secret";
-const REDIRECT_URI = process.env.REDIRECT_URI || "http://localhost:5000/auth/instagram/callback";
+// Set up Facebook app credentials
+const FB_APP_ID = process.env.FACEBOOK_APP_ID;
+const FB_APP_SECRET = process.env.FACEBOOK_APP_SECRET;
+const REDIRECT_URI = process.env.REDIRECT_URI;
 
 export async function registerRoutes(app: Express): Promise<Server> {
   // Set up CORS
@@ -166,7 +171,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/media", requireAuth, async (req, res) => {
     try {
       const instagramId = req.session.instagramId;
-      const user = await storage.getUser(req.session.userId);
+      if (!req.session.userId) {
+        return res.status(400).json({ message: "User ID not found in session" });
+      }
+      const userId = req.session.userId;
+      const user = await storage.getUser(userId);
       
       if (!instagramId || !user?.accessToken) {
         return res.status(400).json({ message: "Instagram account not connected properly" });
@@ -227,7 +236,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const validatedData = instagramCommentReplySchema.parse(req.body);
       const { comment_id, message } = validatedData;
       
-      const user = await storage.getUser(req.session.userId);
+      if (!req.session.userId) {
+        return res.status(400).json({ message: "User ID not found in session" });
+      }
+      const userId = req.session.userId;
+      const user = await storage.getUser(userId);
       if (!user?.accessToken) {
         return res.status(400).json({ message: "Instagram account not connected properly" });
       }
