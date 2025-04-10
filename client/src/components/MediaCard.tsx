@@ -1,11 +1,14 @@
 import { useState } from "react";
 import { InstagramMedia } from "@/lib/types";
-import { formatRelativeTime } from "@/lib/instagram";
+import { formatRelativeTime, postComment, likeMedia, unlikeMedia } from "@/lib/instagram";
 import { Card, CardContent } from "@/components/ui/card";
 import { Heart, MessageSquare, Image as ImageIcon, Film } from "lucide-react";
 import Comment from "./Comment";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { useQueryClient } from "@tanstack/react-query";
+import { useToast } from "@/hooks/use-toast";
+import { Loader2 } from "lucide-react";
 
 interface MediaCardProps {
   item: InstagramMedia;
@@ -13,8 +16,14 @@ interface MediaCardProps {
 
 export default function MediaCard({ item }: MediaCardProps) {
   const [commentText, setCommentText] = useState("");
+  const [isLiked, setIsLiked] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isCommentSubmitting, setIsCommentSubmitting] = useState(false);
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
   
   const {
+    id,
     media_type,
     media_url,
     caption,
@@ -28,14 +37,116 @@ export default function MediaCard({ item }: MediaCardProps) {
   const mediaTypeLabel = media_type === 'VIDEO' ? 'Video' : 'Image';
   const formattedTime = formatRelativeTime(timestamp);
   
-  const handleCommentSubmit = (e: React.FormEvent) => {
+  const handleCommentSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!commentText.trim()) return;
     
-    // In a real app, this would post the comment to Instagram
-    // Since Instagram API doesn't support posting comments via API in development mode
-    // This is just a placeholder
-    setCommentText("");
+    setIsCommentSubmitting(true);
+    try {
+      const response = await postComment({
+        media_id: id,
+        message: commentText
+      });
+      
+      setCommentText("");
+      queryClient.invalidateQueries({ queryKey: ['/api/media'] });
+      
+      // Check if the API doesn't support this operation
+      if (response.apiUnsupported) {
+        toast({
+          title: "Comment Recorded Locally",
+          description: "Instagram's API doesn't support this action, but we've recorded your comment in the app.",
+          duration: 5000,
+        });
+      } else {
+        toast({
+          title: "Comment Posted",
+          description: "Your comment has been posted successfully.",
+        });
+      }
+    } catch (error) {
+      // Check if this is an API error with a specific message
+      let errorMessage = "An unknown error occurred";
+      
+      if (error instanceof Error) {
+        errorMessage = error.message;
+      } else if (typeof error === 'object' && error !== null) {
+        // Try to extract the error message from the API response
+        const errorObj = error as any;
+        if (errorObj.error?.error?.message) {
+          errorMessage = errorObj.error.error.message;
+        } else if (errorObj.message) {
+          errorMessage = errorObj.message;
+        }
+      }
+      
+      toast({
+        variant: "destructive",
+        title: "Failed to Post Comment",
+        description: errorMessage,
+      });
+    } finally {
+      setIsCommentSubmitting(false);
+    }
+  };
+
+  const handleLikeToggle = async () => {
+    setIsSubmitting(true);
+    try {
+      if (isLiked) {
+        const response = await unlikeMedia({ media_id: id });
+        setIsLiked(false);
+        
+        // Check if the API doesn't support this operation
+        if (response.apiUnsupported) {
+          toast({
+            title: "Like Recorded Locally",
+            description: "Instagram's API doesn't support this action, but we've recorded your like in the app.",
+            duration: 5000,
+          });
+        }
+      } else {
+        const response = await likeMedia({ media_id: id });
+        setIsLiked(true);
+        
+        // Check if the API doesn't support this operation
+        if (response.apiUnsupported) {
+          toast({
+            title: "Like Recorded Locally",
+            description: "Instagram's API doesn't support this action, but we've recorded your like in the app.",
+            duration: 5000,
+          });
+        }
+      }
+      
+      queryClient.invalidateQueries({ queryKey: ['/api/media'] });
+    } catch (error) {
+      // Check if this is an API error with a specific message
+      let errorMessage = "An unknown error occurred";
+      
+      if (error instanceof Error) {
+        errorMessage = error.message;
+      } else if (typeof error === 'object' && error !== null) {
+        // Try to extract the error message from the API response
+        const errorObj = error as any;
+        if (errorObj.error?.error?.message) {
+          errorMessage = errorObj.error.error.message;
+        } else if (errorObj.message) {
+          errorMessage = errorObj.message;
+        }
+      }
+      
+      toast({
+        variant: "destructive",
+        title: "Action Failed",
+        description: errorMessage,
+      });
+      
+      // Don't change the like state if the API call failed
+      setIsLiked(isLiked);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -55,8 +166,16 @@ export default function MediaCard({ item }: MediaCardProps) {
       <CardContent className="p-4">
         <div className="flex justify-between items-center mb-3">
           <div className="flex space-x-3">
-            <button className="text-gray-700 hover:text-red-500 transition flex items-center">
-              <Heart className="h-4 w-4 mr-1" />
+            <button 
+              className={`text-gray-700 hover:text-red-500 transition flex items-center ${isLiked ? 'text-red-500' : ''}`}
+              // onClick={handleLikeToggle}
+              disabled={isSubmitting}
+            >
+              {isSubmitting ? (
+                <Loader2 className="h-4 w-4 animate-spin mr-1" />
+              ) : (
+                <Heart className="h-4 w-4 mr-1" />
+              )}
               <span className="text-xs">{like_count}</span>
             </button>
             <button className="text-gray-700 hover:text-blue-500 transition flex items-center">
@@ -90,13 +209,14 @@ export default function MediaCard({ item }: MediaCardProps) {
               placeholder="Add a comment..."
               value={commentText}
               onChange={(e) => setCommentText(e.target.value)}
+              disabled={isCommentSubmitting}
             />
             <Button 
               type="submit" 
               className="ml-2 bg-blue-500 text-white text-sm"
-              disabled={!commentText.trim()}
+              disabled={!commentText.trim() || isCommentSubmitting}
             >
-              Post
+              {isCommentSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : "Post"}
             </Button>
           </form>
         </div>

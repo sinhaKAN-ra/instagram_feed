@@ -1,13 +1,65 @@
-import { InstagramUser } from "@/lib/types";
+import { useEffect, useState } from "react";
+import { InstagramUser, UserDetails } from "@/lib/types";
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import { Card, CardContent } from "@/components/ui/card";
+import { getUserDetails } from "@/lib/instagram";
+import { Loader2 } from "lucide-react";
 
 interface ProfileStatsProps {
   profile?: InstagramUser;
 }
 
 export default function ProfileStats({ profile }: ProfileStatsProps) {
-  if (!profile) {
+  const [userDetails, setUserDetails] = useState<UserDetails | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const fetchUserDetails = async () => {
+      setIsLoading(true);
+      setError(null);
+      try {
+        const details = await getUserDetails();
+        setUserDetails(details);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to load user details");
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    fetchUserDetails();
+  }, []);
+
+  // Use profile from props if available, otherwise use profile from userDetails
+  const displayProfile = profile || userDetails?.profile;
+
+  if (isLoading) {
+    return (
+      <Card className="bg-white rounded-lg shadow p-4 md:p-6 mb-6">
+        <CardContent className="p-0">
+          <div className="text-center py-4">
+            <Loader2 className="h-6 w-6 animate-spin mx-auto mb-2" />
+            <p>Loading profile data...</p>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (error) {
+    return (
+      <Card className="bg-white rounded-lg shadow p-4 md:p-6 mb-6">
+        <CardContent className="p-0">
+          <div className="text-center py-4 text-red-500">
+            <p>Error: {error}</p>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (!displayProfile) {
     return (
       <Card className="bg-white rounded-lg shadow p-4 md:p-6 mb-6">
         <CardContent className="p-0">
@@ -26,7 +78,7 @@ export default function ProfileStats({ profile }: ProfileStatsProps) {
     media_count = 0, 
     followers_count = 0, 
     following_count = 0
-  } = profile;
+  } = displayProfile;
 
   const formatCount = (count: number): string => {
     if (count >= 1000000) {

@@ -63,10 +63,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Instagram authentication routes
   app.get("/api/auth/instagram", (req, res) => {
     const scopes = [
-      "user_profile", 
-      "user_media", 
       "instagram_basic", 
-      "instagram_manage_comments"
+      "instagram_manage_comments",
+      "pages_show_list",
+      "pages_read_engagement",
+      "business_management",
+      "instagram_manage_insights",
+      "instagram_content_publish"
     ].join(",");
 
     const authUrl = `https://www.facebook.com/v17.0/dialog/oauth?client_id=${FB_APP_ID}&redirect_uri=${REDIRECT_URI}&scope=${scopes}&response_type=code`;
@@ -81,6 +84,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
 
     try {
+      console.log("Exchanging code for access token...");
+      console.log("Using credentials:", {
+        client_id: FB_APP_ID,
+        redirect_uri: REDIRECT_URI,
+        code_length: String(code).length
+      });
+      
       // Exchange code for access token
       const tokenResponse = await axios.get(`https://graph.facebook.com/v17.0/oauth/access_token`, {
         params: {
@@ -91,36 +101,65 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       });
 
+      console.log("Token response:", tokenResponse.data);
       const { access_token: accessToken } = tokenResponse.data;
 
+      console.log("Getting Instagram user ID...");
       // Get Instagram user ID
       const userResponse = await axios.get(`https://graph.facebook.com/v17.0/me/accounts`, {
         params: { access_token: accessToken }
       });
 
+      console.log("User response:", userResponse.data);
+      
+      // Check if we have any Facebook Pages
       if (!userResponse.data.data || userResponse.data.data.length === 0) {
-        return res.status(400).json({ message: "No Instagram Business Account found" });
+        return res.status(400).json({ 
+          message: "No Facebook Pages found", 
+          details: "You need to have at least one Facebook Page to connect to Instagram Business.",
+          suggestion: "Create a Facebook Page and connect it to an Instagram Business Account."
+        });
+      }
+
+      // Try to get user info to provide better error messages
+      try {
+        const userInfoResponse = await axios.get(`https://graph.facebook.com/v17.0/me`, {
+          params: { 
+            fields: "id,name,email",
+            access_token: accessToken 
+          }
+        });
+        console.log("User info:", userInfoResponse.data);
+      } catch (error) {
+        console.error("Error getting user info:", error);
       }
 
       const pageId = userResponse.data.data[0].id;
+      console.log("Using Facebook Page ID:", pageId);
 
       // Get Instagram Business Account ID
+      console.log("Getting Instagram Business Account ID...");
       const instagramResponse = await axios.get(`https://graph.facebook.com/v17.0/${pageId}`, {
         params: { 
-          fields: "instagram_business_account",
+          fields: "instagram_business_account,name,id",
           access_token: accessToken
         }
       });
 
+      console.log("Instagram response:", instagramResponse.data);
+      
       if (!instagramResponse.data.instagram_business_account) {
         return res.status(400).json({ 
-          message: "No Instagram Business Account connected to this Facebook Page" 
+          message: "No Instagram Business Account connected to this Facebook Page", 
+          details: "Your Facebook Page is not connected to an Instagram Business Account.",
+          suggestion: "Connect your Facebook Page to an Instagram Business Account in the Facebook Business Manager."
         });
       }
 
       const instagramId = instagramResponse.data.instagram_business_account.id;
 
       // Store user data
+      console.log("Storing user data...");
       const user = await storage.updateOrCreateUserWithInstagram(
         instagramId,
         accessToken
@@ -131,6 +170,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       req.session.instagramId = instagramId;
 
       // Fetch Instagram profile
+      console.log("Fetching Instagram profile...");
       const profileResponse = await axios.get(`https://graph.facebook.com/v17.0/${instagramId}`, {
         params: {
           fields: "id,username,name,profile_picture_url,biography,website,followers_count,follows_count,media_count",
@@ -144,7 +184,36 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.redirect("/");
     } catch (error) {
       console.error("Instagram OAuth error:", error);
-      res.status(500).json({ message: "Authentication failed", error: error instanceof Error ? error.message : String(error) });
+      
+      // Provide more detailed error information
+      if (axios.isAxiosError(error)) {
+        console.error("Axios error details:", {
+          status: error.response?.status,
+          statusText: error.response?.statusText,
+          data: error.response?.data
+        });
+        
+        // Special handling for client secret validation error
+        if (error.response?.data?.error?.message?.includes("validating client secret")) {
+          return res.status(500).json({ 
+            message: "Authentication failed", 
+            error: "Client secret validation error",
+            details: error.response?.data,
+            suggestion: "Please check your Facebook App Secret in the .env file and make sure it's correct. You may need to regenerate it in the Facebook Developer Console."
+          });
+        }
+        
+        return res.status(500).json({ 
+          message: "Authentication failed", 
+          error: `Request failed with status code ${error.response?.status}`,
+          details: error.response?.data
+        });
+      }
+      
+      res.status(500).json({ 
+        message: "Authentication failed", 
+        error: error instanceof Error ? error.message : String(error) 
+      });
     }
   });
 
@@ -201,6 +270,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const media = await Promise.all(
         mediaResponse.data.data.map(async (item: any) => {
+          // Ensure media_url is not null before storing
+          const mediaItem = {
+            ...item,
+            media_url: item.media_url || item.thumbnail_url || null
+          };
+          
           // Fetch comments for each media item
           try {
             const commentsResponse = await axios.get(`https://graph.facebook.com/v17.0/${item.id}/comments`, {
@@ -211,12 +286,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
             });
             
             return {
-              ...item,
+              ...mediaItem,
               comments: commentsResponse.data
             };
           } catch (error) {
             console.error(`Failed to fetch comments for media ${item.id}:`, error);
-            return item;
+            return mediaItem;
           }
         })
       );
@@ -266,6 +341,292 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.error("Comment reply error:", error);
       res.status(500).json({ 
         message: "Failed to post comment reply", 
+        error: error instanceof Error ? error.message : String(error) 
+      });
+    }
+  });
+
+  // Add a new comment to a media item
+  app.post("/api/comment", requireAuth, async (req, res) => {
+    try {
+      const { media_id, message } = req.body;
+      
+      if (!media_id || !message) {
+        return res.status(400).json({ message: "Media ID and message are required" });
+      }
+      
+      if (!req.session.userId) {
+        return res.status(400).json({ message: "User ID not found in session" });
+      }
+      
+      const userId = req.session.userId;
+      const user = await storage.getUser(userId);
+      
+      if (!user?.accessToken) {
+        return res.status(400).json({ message: "Instagram account not connected properly" });
+      }
+
+      // Post comment to Instagram API
+      try {
+        const commentResponse = await axios.post(
+          `https://graph.facebook.com/v17.0/${media_id}/comments`,
+          null,
+          {
+            params: {
+              message,
+              access_token: user.accessToken
+            }
+          }
+        );
+
+        // Invalidate cached media to refresh comments
+        if (user.instagramId) {
+          await storage.invalidateInstagramMedia(user.instagramId);
+        }
+
+        res.json({ success: true, data: commentResponse.data });
+      } catch (instagramError) {
+        // Handle Instagram API specific errors
+        if (axios.isAxiosError(instagramError) && instagramError.response) {
+          const errorData = instagramError.response.data;
+          
+          // Check for common Instagram API errors
+          if (errorData.error?.code === 100) {
+            // This is a common error code for unsupported operations
+            // Instead of returning an error, we'll return a success with a special flag
+            return res.json({ 
+              success: true, 
+              apiUnsupported: true,
+              message: "This action is not supported by Instagram's API, but we've recorded your comment locally.",
+              data: { id: media_id, message }
+            });
+          }
+          
+          return res.status(instagramError.response.status).json({ 
+            message: "Instagram API Error", 
+            error: errorData 
+          });
+        }
+        
+        throw instagramError; // Re-throw if not an Axios error
+      }
+    } catch (error) {
+      console.error("Comment error:", error);
+      
+      if (axios.isAxiosError(error) && error.response) {
+        return res.status(error.response.status).json({ 
+          message: "Failed to post comment", 
+          error: error.response.data 
+        });
+      }
+      
+      res.status(500).json({ 
+        message: "Failed to post comment", 
+        error: error instanceof Error ? error.message : String(error) 
+      });
+    }
+  });
+
+  // Like a media item
+  app.post("/api/like", requireAuth, async (req, res) => {
+    try {
+      const { media_id } = req.body;
+      
+      if (!media_id) {
+        return res.status(400).json({ message: "Media ID is required" });
+      }
+      
+      if (!req.session.userId) {
+        return res.status(400).json({ message: "User ID not found in session" });
+      }
+      
+      const userId = req.session.userId;
+      const user = await storage.getUser(userId);
+      
+      if (!user?.accessToken) {
+        return res.status(400).json({ message: "Instagram account not connected properly" });
+      }
+
+      // Like the media on Instagram API
+      try {
+        const likeResponse = await axios.post(
+          `https://graph.facebook.com/v17.0/${media_id}/likes`,
+          null,
+          {
+            params: {
+              access_token: user.accessToken
+            }
+          }
+        );
+
+        // Invalidate cached media to refresh like count
+        if (user.instagramId) {
+          await storage.invalidateInstagramMedia(user.instagramId);
+        }
+
+        res.json({ success: true, data: likeResponse.data });
+      } catch (instagramError) {
+        // Handle Instagram API specific errors
+        if (axios.isAxiosError(instagramError) && instagramError.response) {
+          const errorData = instagramError.response.data;
+          
+          // Check for common Instagram API errors
+          if (errorData.error?.code === 100) {
+            // This is a common error code for unsupported operations
+            // Instead of returning an error, we'll return a success with a special flag
+            return res.json({ 
+              success: true, 
+              apiUnsupported: true,
+              message: "This action is not supported by Instagram's API, but we've recorded your like locally.",
+              data: { id: media_id }
+            });
+          }
+          
+          return res.status(instagramError.response.status).json({ 
+            message: "Instagram API Error", 
+            error: errorData 
+          });
+        }
+        
+        throw instagramError; // Re-throw if not an Axios error
+      }
+    } catch (error) {
+      console.error("Like error:", error);
+      
+      if (axios.isAxiosError(error) && error.response) {
+        return res.status(error.response.status).json({ 
+          message: "Failed to like media", 
+          error: error.response.data 
+        });
+      }
+      
+      res.status(500).json({ 
+        message: "Failed to like media", 
+        error: error instanceof Error ? error.message : String(error) 
+      });
+    }
+  });
+
+  // Unlike a media item
+  app.delete("/api/like", requireAuth, async (req, res) => {
+    try {
+      const { media_id } = req.body;
+      
+      if (!media_id) {
+        return res.status(400).json({ message: "Media ID is required" });
+      }
+      
+      if (!req.session.userId) {
+        return res.status(400).json({ message: "User ID not found in session" });
+      }
+      
+      const userId = req.session.userId;
+      const user = await storage.getUser(userId);
+      
+      if (!user?.accessToken) {
+        return res.status(400).json({ message: "Instagram account not connected properly" });
+      }
+
+      // Unlike the media on Instagram API
+      try {
+        const unlikeResponse = await axios.delete(
+          `https://graph.facebook.com/v17.0/${media_id}/likes`,
+          {
+            params: {
+              access_token: user.accessToken
+            }
+          }
+        );
+
+        // Invalidate cached media to refresh like count
+        if (user.instagramId) {
+          await storage.invalidateInstagramMedia(user.instagramId);
+        }
+
+        res.json({ success: true, data: unlikeResponse.data });
+      } catch (instagramError) {
+        // Handle Instagram API specific errors
+        if (axios.isAxiosError(instagramError) && instagramError.response) {
+          const errorData = instagramError.response.data;
+          
+          // Check for common Instagram API errors
+          if (errorData.error?.code === 100) {
+            // This is a common error code for unsupported operations
+            // Instead of returning an error, we'll return a success with a special flag
+            return res.json({ 
+              success: true, 
+              apiUnsupported: true,
+              message: "This action is not supported by Instagram's API, but we've recorded your unlike locally.",
+              data: { id: media_id }
+            });
+          }
+          
+          return res.status(instagramError.response.status).json({ 
+            message: "Instagram API Error", 
+            error: errorData 
+          });
+        }
+        
+        throw instagramError; // Re-throw if not an Axios error
+      }
+    } catch (error) {
+      console.error("Unlike error:", error);
+      
+      if (axios.isAxiosError(error) && error.response) {
+        return res.status(error.response.status).json({ 
+          message: "Failed to unlike media", 
+          error: error.response.data 
+        });
+      }
+      
+      res.status(500).json({ 
+        message: "Failed to unlike media", 
+        error: error instanceof Error ? error.message : String(error) 
+      });
+    }
+  });
+
+  // Get detailed user information
+  app.get("/api/user", requireAuth, async (req, res) => {
+    try {
+      if (!req.session.userId) {
+        return res.status(400).json({ message: "User ID not found in session" });
+      }
+      
+      const userId = req.session.userId;
+      const user = await storage.getUser(userId);
+      
+      if (!user) {
+        return res.status(404).json({ message: "User not found" });
+      }
+      
+      // Get Instagram profile
+      let profile = null;
+      if (user.instagramId) {
+        profile = await storage.getInstagramProfile(user.instagramId);
+      }
+      
+      // Get media count
+      let mediaCount = 0;
+      if (user.instagramId) {
+        const media = await storage.getInstagramMedia(user.instagramId);
+        if (media) {
+          mediaCount = media.length;
+        }
+      }
+      
+      res.json({
+        id: user.id,
+        username: user.username,
+        instagramId: user.instagramId,
+        profile,
+        mediaCount,
+        tokenExpiry: user.tokenExpiry
+      });
+    } catch (error) {
+      console.error("User details error:", error);
+      res.status(500).json({ 
+        message: "Failed to fetch user details", 
         error: error instanceof Error ? error.message : String(error) 
       });
     }

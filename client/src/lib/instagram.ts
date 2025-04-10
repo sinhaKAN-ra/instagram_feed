@@ -1,4 +1,4 @@
-import { InstagramUser, InstagramMedia, CommentReplyPayload, AuthStatus } from './types';
+import { InstagramUser, InstagramMedia, CommentReplyPayload, AuthStatus, CommentPayload, LikePayload, UserDetails } from './types';
 import { apiRequest } from './queryClient';
 
 // Get Instagram Auth URL
@@ -31,6 +31,30 @@ export async function logout(): Promise<void> {
 // Reply to a comment
 export async function replyToComment(data: CommentReplyPayload): Promise<any> {
   const response = await apiRequest('POST', '/api/comment/reply', data);
+  return response.json();
+}
+
+// Get user details
+export async function getUserDetails(): Promise<UserDetails> {
+  const response = await apiRequest('GET', '/api/user');
+  return response.json();
+}
+
+// Post a comment on a media item
+export async function postComment(data: CommentPayload): Promise<any> {
+  const response = await apiRequest('POST', '/api/comment', data);
+  return response.json();
+}
+
+// Like a media item
+export async function likeMedia(data: LikePayload): Promise<any> {
+  const response = await apiRequest('POST', '/api/like', data);
+  return response.json();
+}
+
+// Unlike a media item
+export async function unlikeMedia(data: LikePayload): Promise<any> {
+  const response = await apiRequest('DELETE', '/api/like', data);
   return response.json();
 }
 

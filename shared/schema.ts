@@ -55,7 +55,7 @@ export const instagramMedia = pgTable("instagram_media", {
   mediaId: text("media_id").notNull().unique(),
   userId: integer("user_id").notNull(),
   mediaType: text("media_type").notNull(),
-  mediaUrl: text("media_url").notNull(),
+  mediaUrl: text("media_url"),
   permalink: text("permalink").notNull(),
   thumbnailUrl: text("thumbnail_url"),
   caption: text("caption"),
@@ -100,7 +100,7 @@ export const instagramUserSchema = z.object({
 export const instagramMediaSchema = z.object({
   id: z.string(),
   media_type: z.string(),
-  media_url: z.string(),
+  media_url: z.string().nullable(),
   permalink: z.string(),
   thumbnail_url: z.string().optional(),
   caption: z.string().optional(),

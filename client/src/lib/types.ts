@@ -43,3 +43,21 @@ export interface AuthStatus {
   userId: number | null;
   instagramId: string | null;
 }
+
+export interface CommentPayload {
+  media_id: string;
+  message: string;
+}
+
+export interface LikePayload {
+  media_id: string;
+}
+
+export interface UserDetails {
+  id: number;
+  username: string;
+  instagramId: string | null;
+  profile: InstagramUser | null;
+  mediaCount: number;
+  tokenExpiry: string | null;
+}

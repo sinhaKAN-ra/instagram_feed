@@ -11,7 +11,7 @@ export default function Sidebar() {
           <LayoutGrid className="h-5 w-5" />
           <span>Dashboard</span>
         </a>
-        <a 
+        {/* <a 
           href="#" 
           className="flex items-center space-x-3 px-4 py-3 text-gray-700 hover:bg-gray-100 transition"
         >
@@ -38,7 +38,7 @@ export default function Sidebar() {
         >
           <Settings className="h-5 w-5" />
           <span>Settings</span>
-        </a>
+        </a> */}
       </nav>
     </aside>
   );

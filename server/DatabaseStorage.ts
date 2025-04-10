@@ -154,49 +154,53 @@ export class DatabaseStorage implements IStorage {
   }
 
   async storeInstagramMedia(instagramId: string, mediaItems: InstagramMedia[]): Promise<void> {
-    // Get the user ID from the instagramId
-    const user = await this.getUserByInstagramId(instagramId);
-    if (!user) return;
-    
     const now = new Date();
     
-    // For each media item, upsert it into the database
+    // Process each media item
     for (const item of mediaItems) {
-      const existingMedia = await db.select()
-        .from(instagramMedia)
-        .where(eq(instagramMedia.mediaId, item.id));
-      
-      if (existingMedia.length > 0) {
-        await db.update(instagramMedia)
-          .set({
+      try {
+        // Check if media already exists
+        const existingMedia = await db.select()
+          .from(instagramMedia)
+          .where(eq(instagramMedia.mediaId, item.id));
+        
+        if (existingMedia.length > 0) {
+          // Update existing media
+          await db.update(instagramMedia)
+            .set({
+              mediaType: item.media_type,
+              mediaUrl: item.media_url || null,
+              permalink: item.permalink,
+              thumbnailUrl: item.thumbnail_url || null,
+              caption: item.caption || null,
+              timestamp: item.timestamp,
+              likeCount: item.like_count || null,
+              commentsCount: item.comments_count || null,
+              commentsData: item.comments || { data: [] },
+              updatedAt: now
+            })
+            .where(eq(instagramMedia.mediaId, item.id));
+        } else {
+          // Insert new media
+          await db.insert(instagramMedia).values({
+            instagramId,
+            mediaId: item.id,
+            userId: 1, // Default user ID, should be replaced with actual user ID
             mediaType: item.media_type,
-            mediaUrl: item.media_url,
+            mediaUrl: item.media_url || null,
             permalink: item.permalink,
             thumbnailUrl: item.thumbnail_url || null,
             caption: item.caption || null,
             timestamp: item.timestamp,
             likeCount: item.like_count || null,
             commentsCount: item.comments_count || null,
-            commentsData: item.comments ? item.comments : null,
+            commentsData: item.comments || { data: [] },
             updatedAt: now
-          })
-          .where(eq(instagramMedia.mediaId, item.id));
-      } else {
-        await db.insert(instagramMedia).values({
-          instagramId,
-          mediaId: item.id,
-          userId: user.id,
-          mediaType: item.media_type,
-          mediaUrl: item.media_url,
-          permalink: item.permalink,
-          thumbnailUrl: item.thumbnail_url || null,
-          caption: item.caption || null,
-          timestamp: item.timestamp,
-          likeCount: item.like_count || null,
-          commentsCount: item.comments_count || null,
-          commentsData: item.comments ? item.comments : null,
-          updatedAt: now
-        });
+          });
+        }
+      } catch (error) {
+        console.error(`Error storing media item ${item.id}:`, error);
+        // Continue with next item
       }
     }
   }
@@ -222,5 +226,11 @@ export class DatabaseStorage implements IStorage {
       comments_count: item.commentsCount || undefined,
       comments: item.commentsData as any
     }));
+  }
+
+  async invalidateInstagramMedia(instagramId: string): Promise<void> {
+    // Delete all media for this Instagram ID to force a refresh
+    await db.delete(instagramMedia)
+      .where(eq(instagramMedia.instagramId, instagramId));
   }
 }

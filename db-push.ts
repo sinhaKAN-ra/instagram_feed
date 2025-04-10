@@ -59,7 +59,7 @@ async function pushSchema() {
       media_id TEXT NOT NULL UNIQUE,
       user_id INTEGER NOT NULL,
       media_type TEXT NOT NULL,
-      media_url TEXT NOT NULL,
+      media_url TEXT,
       permalink TEXT NOT NULL,
       thumbnail_url TEXT,
       caption TEXT,
